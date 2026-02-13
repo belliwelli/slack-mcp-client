@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"strings"
 	"time"
@@ -38,6 +39,35 @@ type Client struct {
 	discoveredTools map[string]mcp.ToolInfo
 	tracingHandler  observability.TracingHandler
 	activeThreads   map[string]bool // channel:threadTS keys where bot has been mentioned
+}
+
+// thinkingMessages is the pool of random "working on it" indicators.
+var thinkingMessages = []string{
+	"On it...",
+	"Digging in...",
+	"One sec...",
+	"Let me check...",
+	"Pulling that up...",
+	"Looking into it...",
+	"Crunching...",
+	"Searching...",
+	"Firing up the neurons...",
+	"Brb, asking the data...",
+}
+
+// randomThinkingMessage returns a random thinking indicator.
+func randomThinkingMessage() string {
+	return thinkingMessages[rand.Intn(len(thinkingMessages))]
+}
+
+// isThinkingMessage checks if a message is any of the known thinking indicators.
+func isThinkingMessage(text string) bool {
+	for _, msg := range thinkingMessages {
+		if text == msg {
+			return true
+		}
+	}
+	return false
 }
 
 // Message represents a message in the conversation history
@@ -468,8 +498,8 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 
 	c.addToHistory(channelID, threadTS, timestamp, "user", userPrompt, profile.userId, profile.realName, profile.email) // Add user message to history
 
-	// Show a temporary "typing" indicator
-	c.userFrontend.SendMessage(channelID, threadTS, c.cfg.Slack.ThinkingMessage)
+	// Show a temporary "typing" indicator (randomized)
+	c.userFrontend.SendMessage(channelID, threadTS, randomThinkingMessage())
 
 	if !c.cfg.LLM.UseAgent {
 		// Prepare the final prompt with custom prompt as system instruction
