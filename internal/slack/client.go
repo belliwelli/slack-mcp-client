@@ -37,6 +37,7 @@ type Client struct {
 	historyLimit    int
 	discoveredTools map[string]mcp.ToolInfo
 	tracingHandler  observability.TracingHandler
+	activeThreads   map[string]bool // channel:threadTS keys where bot has been mentioned
 }
 
 // Message represents a message in the conversation history
@@ -201,6 +202,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		historyLimit:    cfg.Slack.MessageHistory, // Store configured number of messages per channel
 		discoveredTools: discoveredTools,
 		tracingHandler:  tracingHandler,
+		activeThreads:   make(map[string]bool),
 	}, nil
 }
 
@@ -264,6 +266,12 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			if parentTS == "" {
 				parentTS = ev.TimeStamp // Use the original message timestamp if no thread
 			}
+
+			// Track this thread so the bot stays engaged for follow-up messages
+			threadKey := fmt.Sprintf("%s:%s", ev.Channel, parentTS)
+			c.activeThreads[threadKey] = true
+			c.logger.InfoKV("Tracking active thread", "channel", ev.Channel, "threadTS", parentTS)
+
 			// Use handleUserPrompt for app mentions too, for consistency
 			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, parentTS, ev.TimeStamp, profile)
 
@@ -273,8 +281,19 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			isNotEdited := ev.SubType != "message_changed"
 			isBot := ev.BotID != "" || ev.SubType == "bot_message"
 
-			if isDirectMessage && isValidUser && isNotEdited && !isBot {
-				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
+			// Check if this is a reply in a thread the bot is already participating in
+			isActiveThread := false
+			if ev.ThreadTimeStamp != "" {
+				threadKey := fmt.Sprintf("%s:%s", ev.Channel, ev.ThreadTimeStamp)
+				isActiveThread = c.activeThreads[threadKey]
+			}
+
+			if (isDirectMessage || isActiveThread) && isValidUser && isNotEdited && !isBot {
+				if isActiveThread {
+					c.logger.InfoKV("Received thread follow-up (no @mention needed)", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
+				} else {
+					c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
+				}
 				profile, err := c.userFrontend.GetUserInfo(ev.User)
 				if err != nil {
 					c.logger.WarnKV("Failed to get user info", "user", ev.User, "error", err)
