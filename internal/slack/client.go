@@ -6,11 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
@@ -261,6 +264,14 @@ func (c *Client) handleEvents() {
 			c.logger.Warn("Connection failed. Retrying...")
 		case socketmode.EventTypeConnected:
 			c.logger.Info("Connected to Slack!")
+		case socketmode.EventTypeSlashCommand:
+			cmd, ok := evt.Data.(slack.SlashCommand)
+			if !ok {
+				c.logger.WarnKV("Ignored unexpected SlashCommand event type", "type", fmt.Sprintf("%T", evt.Data))
+				continue
+			}
+			c.logger.InfoKV("Received slash command", "command", cmd.Command, "user", cmd.UserID, "channel", cmd.ChannelID)
+			go c.handleSlashCommand(cmd, evt)
 		case socketmode.EventTypeEventsAPI:
 			eventsAPIEvent, ok := evt.Data.(slackevents.EventsAPIEvent)
 			if !ok {
@@ -275,6 +286,55 @@ func (c *Client) handleEvents() {
 		}
 	}
 	c.logger.Info("Slack event channel closed.")
+}
+
+// handleSlashCommand handles incoming slash commands via Socket Mode.
+func (c *Client) handleSlashCommand(cmd slack.SlashCommand, evt socketmode.Event) {
+	switch cmd.Command {
+	case "/cerebro-status":
+		// Fetch status from the sidecar status-server running on localhost:8081
+		resp, err := http.Get("http://localhost:8081/slack/status")
+		if err != nil {
+			c.logger.ErrorKV("Failed to reach status server", "error", err)
+			c.userFrontend.Ack(*evt.Request, map[string]interface{}{
+				"response_type": "ephemeral",
+				"text":          fmt.Sprintf("❌ Status server unreachable: %v", err),
+			})
+			return
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.logger.ErrorKV("Failed to read status response", "error", err)
+			c.userFrontend.Ack(*evt.Request, map[string]interface{}{
+				"response_type": "ephemeral",
+				"text":          "❌ Failed to read status response",
+			})
+			return
+		}
+
+		// Parse the Block Kit JSON from the status server
+		var statusResponse map[string]interface{}
+		if err := json.Unmarshal(body, &statusResponse); err != nil {
+			c.logger.ErrorKV("Failed to parse status response", "error", err)
+			c.userFrontend.Ack(*evt.Request, map[string]interface{}{
+				"response_type": "ephemeral",
+				"text":          "❌ Failed to parse status response",
+			})
+			return
+		}
+
+		c.logger.Info("Returning status response to Slack")
+		c.userFrontend.Ack(*evt.Request, statusResponse)
+
+	default:
+		c.logger.WarnKV("Unknown slash command", "command", cmd.Command)
+		c.userFrontend.Ack(*evt.Request, map[string]interface{}{
+			"response_type": "ephemeral",
+			"text":          fmt.Sprintf("Unknown command: %s", cmd.Command),
+		})
+	}
 }
 
 // handleEventMessage processes specific EventsAPI messages.
