@@ -244,7 +244,12 @@ Thought:{{.agent_scratchpad}}
 `, historyBuilder.String())),
 	)
 
-	e := agents.NewExecutor(ag, agents.WithMaxIterations(maxAgentIterations))
+	e := agents.NewExecutor(ag,
+		agents.WithMaxIterations(maxAgentIterations),
+		agents.WithParserErrorHandler(agents.NewParserErrorHandler(func(s string) string {
+			return "Your previous response could not be parsed. Remember: if you want to use a tool, respond ONLY with the Action/Action Input format. If you want to give a final answer, respond ONLY with the AI: format. Do not mix both. Your unparseable response was: " + s
+		})),
+	)
 
 	call, err := e.Call(ctx, map[string]any{
 		"input": prompt,
