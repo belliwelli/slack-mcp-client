@@ -291,7 +291,7 @@ func (c *Client) handleEvents() {
 // handleSlashCommand handles incoming slash commands via Socket Mode.
 func (c *Client) handleSlashCommand(cmd slack.SlashCommand, evt socketmode.Event) {
 	switch cmd.Command {
-	case "/cerebro-status":
+	case "/usage":
 		// Fetch status from the sidecar status-server running on localhost:8081
 		resp, err := http.Get("http://localhost:8081/slack/status")
 		if err != nil {
