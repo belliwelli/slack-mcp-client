@@ -20,6 +20,14 @@ const (
 	langchainProviderName = "langchain"
 )
 
+// modelRejectsTemperature reports whether a model returns a 400 if the
+// `temperature` parameter is included in the request. Anthropic deprecated
+// temperature for Claude Opus 4.7+ (extended thinking models).
+func modelRejectsTemperature(model string) bool {
+	m := strings.ToLower(model)
+	return strings.Contains(m, "opus-4-7") || strings.Contains(m, "opus-5")
+}
+
 // LangChainProvider implements the LLMProvider interface using LangChainGo
 // It acts as a gateway, configured to use various LLM providers underneath.
 type LangChainProvider struct {
@@ -251,9 +259,13 @@ Thought:{{.agent_scratchpad}}
 		})),
 	)
 
+	callOpts := []chains.ChainCallOption{}
+	if !modelRejectsTemperature(p.modelName) {
+		callOpts = append(callOpts, chains.WithTemperature(0.1))
+	}
 	call, err := e.Call(ctx, map[string]any{
 		"input": prompt,
-	}, chains.WithTemperature(0.1))
+	}, callOpts...)
 	if err != nil {
 		p.logger.ErrorKV("LangChainGo Call request failed", "error", err)
 		return "", errors.WrapLLMError(err, "request_failed", "Failed to generate completion from LangChainGo")
@@ -308,8 +320,9 @@ func (p *LangChainProvider) buildOptions(options ProviderOptions) []llms.CallOpt
 		callOptions = append(callOptions, llms.WithModel(modelToUse))
 	}
 
-	// Temperature: Apply if > 0
-	if options.Temperature > 0 {
+	// Temperature: Apply if > 0 and the model accepts it.
+	// Anthropic Claude Opus 4.7+ rejects the `temperature` parameter outright (400).
+	if options.Temperature > 0 && !modelRejectsTemperature(p.modelName) {
 		callOptions = append(callOptions, llms.WithTemperature(options.Temperature))
 		p.logger.DebugKV("Adding Temperature option", "value", options.Temperature)
 	}
