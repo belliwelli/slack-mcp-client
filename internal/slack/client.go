@@ -369,7 +369,12 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			isDirectMessage := strings.HasPrefix(ev.Channel, "D")
 			isValidUser := c.userFrontend.IsValidUser(ev.User)
 			isNotEdited := ev.SubType != "message_changed"
-			isBot := ev.BotID != "" || ev.SubType == "bot_message"
+			// Skip messages with no real user (pure bot posts) and explicit
+			// bot_message subtypes. Don't filter on BotID alone — Slack tags
+			// user-token-posted messages with the parent app's bot_id, which
+			// previously made the bot ignore legitimate user messages routed
+			// through the app (e.g. a post-deploy canary script).
+			isBot := ev.User == "" || ev.SubType == "bot_message"
 
 			// Check if this is a reply in a thread the bot is already participating in
 			isActiveThread := false
